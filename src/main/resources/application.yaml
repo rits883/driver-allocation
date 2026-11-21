@@ -1,0 +1,35 @@
+
+spring:
+  application:
+    name: driver-allocation
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5434/driver_allocation}
+    username: ${DATABASE_USERNAME:driver_allocation}
+    password: ${DATABASE_PASSWORD:driver_allocation}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+
+server:
+  port: 8085
