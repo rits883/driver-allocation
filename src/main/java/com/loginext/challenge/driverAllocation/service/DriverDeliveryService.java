@@ -48,7 +48,7 @@ public class DriverDeliveryService {
             return;
         }
 
-        if ("EVT-FAIL-004".contains(eventId)) {
+        if ("EVT-FAIL-004".equals(eventId)) {
 
             log.warn(
                     "Simulating processing failure for eventId={}",

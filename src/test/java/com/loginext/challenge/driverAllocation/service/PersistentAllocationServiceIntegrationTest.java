@@ -8,6 +8,8 @@ import com.loginext.challenge.driverAllocation.exception.DuplicateOrderConflictE
 import com.loginext.challenge.driverAllocation.exception.InvalidOrderSequenceException;
 import com.loginext.challenge.driverAllocation.repository.DriverRepository;
 
+import com.loginext.challenge.driverAllocation.inbox.AllocationEventProjection;
+import com.loginext.challenge.driverAllocation.kafka.events.AllocationEventCodec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,12 +40,28 @@ class PersistentAllocationServiceIntegrationTest {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    @Autowired private AllocationEventCodec codec;
+    @Autowired private AllocationEventProjection projection;
+
     private String orderReferencePrefix;
 
     @BeforeEach
     void setUp() throws SQLException {
 
         orderReferencePrefix = UUID.randomUUID().toString();
+
+        // Verify that tests use the dedicated test database.
+        try (Connection connection =
+                     jdbcTemplate.getDataSource().getConnection()) {
+
+            String databaseName = connection.getCatalog();
+
+            assertEquals(
+                    "driver_allocation_test",
+                    databaseName,
+                    "Integration tests must use the test database"
+            );
+        }
 
         // Reset test data before every test.
         // NEVER run this against a production database.
@@ -76,18 +94,7 @@ class PersistentAllocationServiceIntegrationTest {
         assertNotNull(lastOrderTime);
         assertEquals(-1L, lastOrderTime);
 
-        // Verify that tests use the dedicated test database.
-        try (Connection connection =
-                     jdbcTemplate.getDataSource().getConnection()) {
 
-            String databaseName = connection.getCatalog();
-
-            assertEquals(
-                    "driver_allocation_test",
-                    databaseName,
-                    "Integration tests must use the test database"
-            );
-        }
     }
 
     @Test
@@ -205,6 +212,52 @@ class PersistentAllocationServiceIntegrationTest {
         );
 
         assertEquals(1, orderCount);
+    }
+
+    @Test
+    void shouldRecordOneOutboxEventAndApplyEachConsumerOnce() {
+        createDriver();
+        var request = new CreateOrderRequest(orderReferencePrefix + "-event", 10L, 20L);
+        assertEquals(service.allocate(request), service.allocate(request));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM allocation_outbox WHERE order_reference = ?",
+                Long.class, request.orderReference()));
+        String payload = jdbcTemplate.queryForObject(
+                "SELECT payload FROM allocation_outbox WHERE order_reference = ?",
+                String.class, request.orderReference());
+        var event = codec.decode(request.orderReference(), payload);
+        assertEquals("DRIVER_ALLOCATED", event.eventType());
+        assertTrue(projection.process("test-audit", event));
+        assertFalse(projection.process("test-audit", event));
+        assertTrue(projection.process("test-notification", event));
+        assertEquals(2L, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM allocation_event_projection WHERE order_reference = ?",
+                Long.class, request.orderReference()));
+    }
+
+    @Test
+    void shouldRecordRejectedOutcome() {
+        var request = new CreateOrderRequest(orderReferencePrefix + "-rejected", 10L, 20L);
+        assertEquals("REJECTED", service.allocate(request).status());
+        String payload = jdbcTemplate.queryForObject(
+                "SELECT payload FROM allocation_outbox WHERE order_reference = ?",
+                String.class, request.orderReference());
+        var event = codec.decode(request.orderReference(), payload);
+        assertEquals("ALLOCATION_REJECTED", event.eventType());
+        assertNull(event.driverId());
+    }
+
+    @Test
+    void shouldRollbackInboxWhenProjectionFails() {
+        var reference = orderReferencePrefix + "-conflict";
+        var first = com.loginext.challenge.driverAllocation.kafka.events.AllocationOutcomeEvent.create(reference, 10, 20, 1L, 30L);
+        var second = com.loginext.challenge.driverAllocation.kafka.events.AllocationOutcomeEvent.create(reference, 10, 20, 1L, 30L);
+        assertTrue(projection.process("test-audit", first));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                () -> projection.process("test-audit", second));
+        assertEquals(0L, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM allocation_inbox WHERE consumer_name = ? AND event_id = ?",
+                Long.class, "test-audit", second.eventId()));
     }
 
     private DriverEntity createDriver() {

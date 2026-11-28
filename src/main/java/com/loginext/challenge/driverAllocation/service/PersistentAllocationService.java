@@ -6,6 +6,8 @@ import com.loginext.challenge.driverAllocation.dto.*;
 import com.loginext.challenge.driverAllocation.exception.DuplicateOrderConflictException;
 import com.loginext.challenge.driverAllocation.exception.InvalidOrderSequenceException;
 import com.loginext.challenge.driverAllocation.repository.*;
+import com.loginext.challenge.driverAllocation.kafka.events.AllocationOutcomeEvent;
+import com.loginext.challenge.driverAllocation.outbox.AllocationOutboxWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -19,6 +21,7 @@ public class PersistentAllocationService {
     private final DriverRepository driverRepository;
     private final OrderRepository orderRepository;
     private final DriverAllocationRepository allocationRepository;
+    private final AllocationOutboxWriter outboxWriter;
 
     @Transactional
     public OrderAllocationResponse allocate(CreateOrderRequest request) {
@@ -63,6 +66,8 @@ public class PersistentAllocationService {
             orderRepository.save(order);
 
             coordination.updateLastOrderTime(request.orderTime());
+            outboxWriter.record(AllocationOutcomeEvent.create(order.getOrderReference(),
+                    request.orderTime(), request.travelTime(), null, null));
 
             return new OrderAllocationResponse(
                     order.getOrderReference(),
@@ -92,7 +97,10 @@ public class PersistentAllocationService {
 
         coordination.updateLastOrderTime(request.orderTime());
 
-        // 6. All database changes commit together.
+        outboxWriter.record(AllocationOutcomeEvent.create(order.getOrderReference(),
+                request.orderTime(), request.travelTime(), driver.getId(), availableAt));
+
+        // 6. All database changes, including the outbox, commit together.
         return new OrderAllocationResponse(
                 order.getOrderReference(),
                 "ASSIGNED",

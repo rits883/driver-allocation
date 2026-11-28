@@ -4,14 +4,17 @@ spring:
     name: driver-allocation
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
-          enable.idempotence: true
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
 
     consumer:
       enable-auto-commit: false
@@ -51,3 +54,11 @@ management:
 
 server:
   port: 8085
+
+# Opt-in for local integration; allocation remains functional with Kafka offline.
+allocation:
+  kafka:
+    enabled: ${ALLOCATION_KAFKA_ENABLED:false}
+    partitions: ${ALLOCATION_KAFKA_PARTITIONS:3}
+    replication-factor: ${ALLOCATION_KAFKA_REPLICATION_FACTOR:1}
+    poll-ms: 1000
