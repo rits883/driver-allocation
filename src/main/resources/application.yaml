@@ -3,6 +3,24 @@ spring:
   application:
     name: driver-allocation
 
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+          enable.idempotence: true
+
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5434/driver_allocation}
     username: ${DATABASE_USERNAME:driver_allocation}
